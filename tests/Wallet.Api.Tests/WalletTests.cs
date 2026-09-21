@@ -10,6 +10,7 @@ using Wallet.Api.Messaging;
 namespace Wallet.Api.Tests;
 
 [Collection("Infrastructure")]
+[Trait("Category", "Integration")]
 public sealed class WalletTests(Infrastructure infrastructure)
 {
     internal static string WalletPath => $"/api/wallets/{DatabaseInitializer.SeedWalletId}";

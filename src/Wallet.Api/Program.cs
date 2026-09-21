@@ -10,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<WalletDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Wallet")));
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<IWithdrawalStore, PostgresWithdrawalStore>();
 builder.Services.AddScoped<WithdrawalService>();
 builder.Services.AddSingleton<IEventPublisher, RabbitMqPublisher>();
 builder.Services.AddScoped<OutboxDispatcher>();

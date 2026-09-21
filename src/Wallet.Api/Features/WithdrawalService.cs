@@ -1,11 +1,10 @@
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Wallet.Api.Data;
 using Wallet.Api.Messaging;
 
 namespace Wallet.Api.Features;
 
-public sealed class WithdrawalService(WalletDbContext db, TimeProvider clock)
+public sealed class WithdrawalService(IWithdrawalStore store, TimeProvider clock)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -17,17 +16,13 @@ public sealed class WithdrawalService(WalletDbContext db, TimeProvider clock)
         if (idempotencyKey == Guid.Empty)
             return new WithdrawalResult.Rejected(WithdrawalFailure.InvalidIdempotencyKey);
 
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await store.BeginAsync(cancellationToken);
         // The lock is held until commit/rollback, including the idempotency check.
-        var wallets = await db.Wallets.FromSqlInterpolated($"""
-            SELECT * FROM "Wallets" WHERE "Id" = {walletId} FOR UPDATE
-            """).ToListAsync(cancellationToken);
-        var wallet = wallets.SingleOrDefault();
+        var wallet = await transaction.LockWalletAsync(walletId, cancellationToken);
         if (wallet is null)
             return new WithdrawalResult.Rejected(WithdrawalFailure.WalletNotFound);
 
-        var existing = await db.Withdrawals.SingleOrDefaultAsync(
-            x => x.WalletId == walletId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+        var existing = await transaction.FindWithdrawalAsync(walletId, idempotencyKey, cancellationToken);
         if (existing is not null)
         {
             if (existing.AmountMinor != amountMinor)
@@ -51,13 +46,12 @@ public sealed class WithdrawalService(WalletDbContext db, TimeProvider clock)
         var eventId = Guid.NewGuid();
         var message = new WithdrawalSucceeded(eventId, WithdrawalSucceeded.Type, withdrawal.Id,
             walletId, amountMinor, wallet.Currency, wallet.BalanceMinor, now);
-        db.Withdrawals.Add(withdrawal);
-        db.OutboxMessages.Add(new OutboxMessage
+        var outbox = new OutboxMessage
         {
             Id = eventId, WithdrawalId = withdrawal.Id, EventType = WithdrawalSucceeded.Type,
             Payload = JsonSerializer.Serialize(message, Json), CreatedAtUtc = now, NextAttemptAtUtc = now
-        });
-        await db.SaveChangesAsync(cancellationToken);
+        };
+        await transaction.SaveAsync(withdrawal, outbox, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return Accepted(withdrawal);
     }

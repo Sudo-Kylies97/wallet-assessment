@@ -3,6 +3,7 @@ using System.Text.Json;
 namespace Wallet.Api.Tests;
 
 [Collection("Infrastructure")]
+[Trait("Category", "Integration")]
 public sealed class SwaggerTests(Infrastructure infrastructure)
 {
     [Fact]

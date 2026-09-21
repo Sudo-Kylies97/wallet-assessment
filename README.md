@@ -93,7 +93,21 @@ Errors use `application/problem+json` with `status`, `title`, `code`, and `trace
 
 ## Tests
 
-With the SDK and Docker running:
+Fast unit tests require the pinned .NET SDK, but no Docker, PostgreSQL, or RabbitMQ:
+
+```sh
+dotnet test Wallet.slnx -c Release --filter Category=Unit
+```
+
+The service uses a narrow `IWithdrawalStore` transaction interface. Unit tests substitute a transactional test double and a fixed `TimeProvider` to check business outcomes, receipt replay, timestamp precision, and storage failures. PostgreSQL row locking and atomic rollback remain covered by integration tests. Retry-delay tests also run in the unit layer, outside the infrastructure fixture.
+
+Run only the integration tests with Docker available:
+
+```sh
+dotnet test Wallet.slnx -c Release --filter Category=Integration
+```
+
+Run both layers with the SDK and Docker running:
 
 ```sh
 dotnet test Wallet.slnx -c Release
@@ -109,9 +123,11 @@ docker compose -f compose.tests.yaml run --build --rm tests
 
 The test runner mounts the local Docker socket so Testcontainers can create disposable PostgreSQL and RabbitMQ instances. It does not use or reset the demonstration database. For a nonstandard socket, set `DOCKER_SOCKET_PATH` to its host path. Results from the container command are written to `artifacts/test-results/wallet-tests.trx`. GitHub Actions runs the same .NET suite and uploads results.
 
-Tests cover positive seeding and restart persistence, exact-balance withdrawals, invalid input, missing wallets, insufficient funds, concurrent overspending attempts, sequential/concurrent idempotency, database constraints and outages, transactional rollback on failed event insertion, broker outage/recovery, event schema and persistence properties, unroutable messages, duplicate publication after a confirmation-save failure, retry delays, and Swagger's documented contract. They use actual database transactions and broker publishes, not EF's in-memory provider.
+Integration tests cover positive seeding and restart persistence, exact-balance withdrawals, invalid input, missing wallets, insufficient funds, concurrent overspending attempts, sequential/concurrent idempotency, database constraints and outages, transactional rollback on failed event insertion, broker outage/recovery, event schema and persistence properties, unroutable messages, duplicate publication after a confirmation-save failure, and Swagger's documented contract. They use actual database transactions and broker publishes, not EF's in-memory provider.
 
 Initial verification completed with **35 passing tests** through both the host SDK and the containerised Release test runner. The subsequent skill-driven review added two tests, and the updated host Release suite passed **37 tests**, with zero failures or skips. The solution built without warnings or errors, and EF reported no pending model changes. A Playwright browser check exercised Swagger's balance, withdrawal, validation, conflict, and lost-response retry flows. Two successful demonstration withdrawals produced two published outbox records and two queued messages. GitHub Actions is configured; no remote CI result is claimed here.
+
+The unit-layer revision passed **52 tests: 20 unit and 32 integration**, with zero failures or skips, through the host Release runner using SDK 10.0.401. The unit-only command also passed with `DOCKER_HOST` pointing to a nonexistent socket, confirming that it does not start infrastructure fixtures. The containerised runner and browser checks were not rerun for this revision.
 
 To maintain the schema, run `dotnet tool restore`, then `dotnet ef migrations add <Name> --project src/Wallet.Api --output-dir Data/Migrations` after changing the EF model; commit the generated migration and snapshot.
 
