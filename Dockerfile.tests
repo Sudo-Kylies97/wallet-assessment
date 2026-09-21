@@ -1,0 +1,6 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401
+WORKDIR /source
+COPY . .
+RUN dotnet restore Wallet.slnx --locked-mode
+RUN dotnet build Wallet.slnx -c Release --no-restore
+CMD ["dotnet", "test", "Wallet.slnx", "-c", "Release", "--no-build", "--logger", "trx;LogFileName=wallet-tests.trx", "--results-directory", "/results"]

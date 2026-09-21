@@ -1,0 +1,13 @@
+name: wallet-assessment-tests
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.tests
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+      - ./artifacts/test-results:/results
