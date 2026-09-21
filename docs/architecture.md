@@ -9,7 +9,8 @@ sequenceDiagram
     participant R as RabbitMQ
     C->>A: POST amountMinor + Idempotency-Key
     A->>A: Validate input
-    A->>D: BEGIN; SELECT wallet FOR UPDATE
+    A->>D: BEGIN transaction
+    A->>D: SELECT wallet FOR UPDATE
     A->>D: Find receipt by wallet + key
     alt Key already succeeded
         D-->>A: Original receipt
@@ -17,7 +18,7 @@ sequenceDiagram
         A-->>C: Original 200 response (409 if amount differs)
     else New withdrawal
         A->>A: Check sufficient funds
-        A->>D: Update balance; insert receipt + outbox event
+        A->>D: Update balance and insert receipt + outbox event
         A->>D: COMMIT
         A-->>C: 200 receipt
     end
