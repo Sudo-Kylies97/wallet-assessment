@@ -17,7 +17,7 @@ docker compose up --build
 
 The credentials are local development defaults. Compose binds exposed ports to loopback. The API automatically applies the checked-in EF Core migration, then inserts the seed wallet only if absent. PostgreSQL must be healthy before the API starts; RabbitMQ can start later without blocking withdrawals.
 
-**Deployment assumption:** Run one API instance with one outbox publisher; multi-instance deployment is unsupported. The outbox has no claim or lease mechanism, so competing publishers can duplicate messages and overwrite retry counts. Each API instance also runs migrations and seeding at startup. Before scaling, coordinate outbox ownership and move database initialization to a single deployment step. Do not use `docker compose up --scale api=2`; the fixed host port also prevents that configuration.
+Run one API instance with one outbox publisher. See [Assumptions](#assumptions) and [Known limitations](#known-limitations) before changing the deployment.
 
 **Seed wallet:** `11111111-1111-1111-1111-111111111111`, **ZAR 1,000.00** (`100000` cents).
 
@@ -90,6 +90,41 @@ Errors use `application/problem+json` with `status`, `title`, `code`, and `trace
 | 409 | `idempotency_conflict` | A successful request used the same key with a different amount |
 | 503 | `database_unavailable` | Transient database connection failure or timeout |
 | 500 | `internal_error` | Unexpected server failure; internal details are logged, not returned |
+
+## Assumptions
+
+- This is a local assessment application running one API instance and one outbox publisher. Do not use `docker compose up --scale api=2`; the fixed host port also prevents that configuration.
+- The demonstration uses one seeded ZAR wallet. Amounts are integer cents, and restarting preserves existing balances and receipts in the database volume.
+- Clients reuse the same idempotency key and amount after an uncertain outcome, and use a new key for a new withdrawal.
+- PostgreSQL is required to process withdrawals. RabbitMQ may be temporarily unavailable; committed events remain in the outbox for later publication.
+
+## Trade-offs
+
+- **Swagger as the client:** keeps the assessment focused on API behaviour, but users must enter idempotency keys and retry requests manually.
+- **Wallet row locking:** makes balance checks and idempotency decisions safe under concurrent requests, but withdrawals on the same wallet wait for one another.
+- **Transactional outbox in the API process:** commits the debit, receipt, and event together without another service, at the cost of delayed publication and dependence on the API process to dispatch events.
+- **Startup migrations and seeding:** simplify local setup, but database initialization must become a separately coordinated deployment step before scaling.
+- **A RabbitMQ connection per event:** keeps recovery simple for this low-volume demonstration, but adds connection overhead compared with a reused connection.
+
+## Known limitations
+
+- **No multi-instance publisher coordination:** the outbox has no claim or lease mechanism. Competing publishers can duplicate messages and overwrite retry counts. Scaling requires coordinated outbox ownership as well as coordinated database initialization.
+- **At-least-once, unordered events:** a crash after publication but before recording success can cause duplicate delivery. Retry backoff can let newer events overtake older ones. Consumers must deduplicate by `eventId`; `balanceAfterMinor` is a historical snapshot and must not overwrite current balance merely because its event arrived last. Use the balance endpoint for current state.
+- **No consumer service:** events are demonstrated through RabbitMQ management. Broker confirmation does not establish that a consumer processed an event.
+- **No retention policy:** withdrawal receipts and outbox rows are retained indefinitely; there is no automated archival or cleanup.
+- **Assessment scope only:** authentication, authorization, deposits, transfers, wallet creation, transaction-history UI, and production deployment are not implemented. This is not a production-grade financial ledger.
+
+## Potential improvements
+
+These are future extensions, not implemented features:
+
+- **Support multiple instances:** add recoverable outbox claims or leases, run migrations in a single deployment step, and test competing publishers and worker crashes.
+- **Improve event consumption:** add a consumer that deduplicates event IDs atomically with its effects. If ordered wallet projections are needed, introduce a per-wallet sequence and handling for stale events and gaps.
+- **Reduce publishing overhead:** reuse RabbitMQ connections with controlled channel access and recovery, retaining mandatory routing and publisher confirms.
+- **Improve operational visibility:** add readiness checks and metrics for pending-event age, retry counts, publication failures, and withdrawal latency.
+- **Manage data growth:** archive published outbox records and define receipt retention alongside an explicit idempotency window, preserving pending events and supported retries.
+- **Extend verification and usability:** add cross-wallet isolation and idempotency-scoping tests, CI coverage reports, and a small client that preserves the key and amount across uncertain retries.
+- **Prepare for production requirements:** add authentication and wallet-level authorization, managed secrets, and a financial ledger with reconciliation before handling real funds.
 
 ## Tests
 
