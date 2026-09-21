@@ -25,9 +25,9 @@ public sealed class WalletsController(WalletDbContext db, WithdrawalService with
         var result = await db.Wallets.AsNoTracking().Where(x => x.Id == walletId)
             .Select(x => new BalanceResponse(x.Id, x.Currency, x.BalanceMinor))
             .SingleOrDefaultAsync(cancellationToken);
-        return result is null
-            ? throw new WalletException(404, "wallet_not_found", "Wallet does not exist.")
-            : Ok(result);
+        if (result is null)
+            return WalletProblems.FromFailure(HttpContext, WithdrawalFailure.WalletNotFound);
+        return Ok(result);
     }
 
     /// <summary>Withdraw funds exactly once per wallet and idempotency key.</summary>
@@ -59,7 +59,14 @@ public sealed class WalletsController(WalletDbContext db, WithdrawalService with
         CancellationToken cancellationToken)
     {
         if (!Guid.TryParseExact(idempotencyKey, "D", out var key) || key == Guid.Empty)
-            throw new WalletException(400, "invalid_idempotency_key", "Idempotency-Key must be a non-empty UUID in hyphenated format.");
-        return Ok(await withdrawals.WithdrawAsync(walletId, request.AmountMinor, key, cancellationToken));
+            return WalletProblems.FromFailure(HttpContext, WithdrawalFailure.InvalidIdempotencyKey);
+
+        var result = await withdrawals.WithdrawAsync(walletId, request.AmountMinor, key, cancellationToken);
+        if (result is WithdrawalResult.Rejected rejected)
+            return WalletProblems.FromFailure(HttpContext, rejected.Reason);
+
+        var receipt = ((WithdrawalResult.Accepted)result).Receipt;
+        return Ok(new WithdrawalResponse(receipt.WithdrawalId, receipt.WalletId, receipt.AmountMinor,
+            receipt.BalanceAfterMinor, receipt.Currency, receipt.OccurredAtUtc));
     }
 }

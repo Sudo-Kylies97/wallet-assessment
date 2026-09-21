@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
-using Wallet.Api.Features;
 
 namespace Wallet.Api.Http;
 
@@ -11,7 +10,6 @@ public sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) : I
     {
         var (status, code, detail) = exception switch
         {
-            WalletException error => (error.StatusCode, error.Code, error.Message),
             _ when IsUnavailable(exception) => (503, "database_unavailable", "Database unavailable. Retry with the same idempotency key and amount."),
             _ => (500, "internal_error", "An unexpected error occurred. Retry with the same idempotency key and amount.")
         };

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Wallet.Api.Data;
+using Wallet.Api.Messaging;
 
 namespace Wallet.Api.Features;
 
@@ -8,31 +9,34 @@ public sealed class WithdrawalService(WalletDbContext db, TimeProvider clock)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public async Task<WithdrawalResponse> WithdrawAsync(Guid walletId, long amountMinor,
+    public async Task<WithdrawalResult> WithdrawAsync(Guid walletId, long amountMinor,
         Guid idempotencyKey, CancellationToken cancellationToken)
     {
         if (amountMinor is <= 0 or > Money.MaxSafeInteger)
-            throw new WalletException(400, "invalid_request", "Amount must be a positive integer in minor units, no greater than 9007199254740991.");
+            return new WithdrawalResult.Rejected(WithdrawalFailure.InvalidAmount);
+        if (idempotencyKey == Guid.Empty)
+            return new WithdrawalResult.Rejected(WithdrawalFailure.InvalidIdempotencyKey);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         // The lock is held until commit/rollback, including the idempotency check.
         var wallets = await db.Wallets.FromSqlInterpolated($"""
             SELECT * FROM "Wallets" WHERE "Id" = {walletId} FOR UPDATE
             """).ToListAsync(cancellationToken);
-        var wallet = wallets.SingleOrDefault()
-            ?? throw new WalletException(404, "wallet_not_found", "Wallet does not exist.");
+        var wallet = wallets.SingleOrDefault();
+        if (wallet is null)
+            return new WithdrawalResult.Rejected(WithdrawalFailure.WalletNotFound);
 
         var existing = await db.Withdrawals.SingleOrDefaultAsync(
             x => x.WalletId == walletId && x.IdempotencyKey == idempotencyKey, cancellationToken);
         if (existing is not null)
         {
             if (existing.AmountMinor != amountMinor)
-                throw new WalletException(409, "idempotency_conflict", "This key was already used with a different amount.");
-            return ToResponse(existing);
+                return new WithdrawalResult.Rejected(WithdrawalFailure.IdempotencyConflict);
+            return Accepted(existing);
         }
 
         if (wallet.BalanceMinor < amountMinor)
-            throw new WalletException(409, "insufficient_funds", "The wallet has insufficient funds.");
+            return new WithdrawalResult.Rejected(WithdrawalFailure.InsufficientFunds);
 
         var now = clock.GetUtcNow();
         // PostgreSQL timestamps retain microseconds; keep the first response identical to replays.
@@ -55,10 +59,10 @@ public sealed class WithdrawalService(WalletDbContext db, TimeProvider clock)
         });
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return ToResponse(withdrawal);
+        return Accepted(withdrawal);
     }
 
-    private static WithdrawalResponse ToResponse(Withdrawal withdrawal) => new(withdrawal.Id,
+    private static WithdrawalResult.Accepted Accepted(Withdrawal withdrawal) => new(new WithdrawalReceipt(withdrawal.Id,
         withdrawal.WalletId, withdrawal.AmountMinor, withdrawal.BalanceAfterMinor,
-        withdrawal.Currency, withdrawal.OccurredAtUtc);
+        withdrawal.Currency, withdrawal.OccurredAtUtc));
 }

@@ -32,7 +32,7 @@ public sealed class RabbitMqPublisher(IConfiguration configuration) : IEventPubl
             cancellationToken: cancellationToken);
         await channel.QueueDeclareAsync(Queue, durable: true, exclusive: false, autoDelete: false,
             cancellationToken: cancellationToken);
-        await channel.QueueBindAsync(Queue, Exchange, Features.WithdrawalSucceeded.Type,
+        await channel.QueueBindAsync(Queue, Exchange, WithdrawalSucceeded.Type,
             cancellationToken: cancellationToken);
         var properties = new BasicProperties
         {

@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Wallet.Api.Features;
 using Wallet.Api.Messaging;
 
 namespace Wallet.Api.Tests;

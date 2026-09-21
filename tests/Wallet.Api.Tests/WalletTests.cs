@@ -4,7 +4,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Wallet.Api.Data;
-using Wallet.Api.Features;
+using Wallet.Api.Http;
+using Wallet.Api.Messaging;
 
 namespace Wallet.Api.Tests;
 
