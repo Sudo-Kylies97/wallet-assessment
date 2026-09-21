@@ -17,6 +17,8 @@ docker compose up --build
 
 The credentials are local development defaults. Compose binds exposed ports to loopback. The API automatically applies the checked-in EF Core migration, then inserts the seed wallet only if absent. PostgreSQL must be healthy before the API starts; RabbitMQ can start later without blocking withdrawals.
 
+**Deployment assumption:** Run one API instance with one outbox publisher; multi-instance deployment is unsupported. The outbox has no claim or lease mechanism, so competing publishers can duplicate messages and overwrite retry counts. Each API instance also runs migrations and seeding at startup. Before scaling, coordinate outbox ownership and move database initialization to a single deployment step. Do not use `docker compose up --scale api=2`; the fixed host port also prevents that configuration.
+
 **Seed wallet:** `11111111-1111-1111-1111-111111111111`, **ZAR 1,000.00** (`100000` cents).
 
 ### Demonstrate with Swagger
