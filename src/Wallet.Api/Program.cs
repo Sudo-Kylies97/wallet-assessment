@@ -30,6 +30,7 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.SchemaFilter<ProblemDetailsSchemaFilter>();
     options.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo
     {
         Title = "Wallet API", Version = "v1",

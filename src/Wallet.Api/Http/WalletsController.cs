@@ -16,9 +16,10 @@ public sealed class WalletsController(WalletDbContext db, WithdrawalService with
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet("balance")]
     [ProducesResponseType<BalanceResponse>(200)]
-    [ProducesResponseType<ProblemDetails>(400)]
-    [ProducesResponseType<ProblemDetails>(404)]
-    [ProducesResponseType<ProblemDetails>(503)]
+    [ProducesResponseType<ProblemDetails>(400, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(404, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(500, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(503, "application/problem+json")]
     public async Task<ActionResult<BalanceResponse>> GetBalance(Guid walletId, CancellationToken cancellationToken)
     {
         var result = await db.Wallets.AsNoTracking().Where(x => x.Id == walletId)
@@ -38,16 +39,22 @@ public sealed class WalletsController(WalletDbContext db, WithdrawalService with
     /// </remarks>
     /// <param name="walletId" example="11111111-1111-1111-1111-111111111111">Wallet UUID.</param>
     /// <param name="request">Positive integer amount in cents.</param>
-    /// <param name="idempotencyKey" example="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa">Use a new UUID for a new withdrawal; reuse it for retries.</param>
+    /// <param name="idempotencyKey" example="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa">Non-empty UUID in hyphenated format. Use a new key for a new withdrawal; reuse it for retries.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
+    /// <response code="400">invalid_request for validation failures, or invalid_idempotency_key for a malformed or empty UUID header.</response>
+    /// <response code="404">wallet_not_found: the wallet does not exist.</response>
+    /// <response code="409">insufficient_funds if the balance cannot cover the amount; idempotency_conflict if the key previously succeeded with a different amount.</response>
+    /// <response code="500">internal_error: retry an uncertain outcome with the same key and amount.</response>
+    /// <response code="503">database_unavailable: retry with the same key and amount.</response>
     [HttpPost("withdrawals")]
     [ProducesResponseType<WithdrawalResponse>(200)]
-    [ProducesResponseType<ProblemDetails>(400)]
-    [ProducesResponseType<ProblemDetails>(404)]
-    [ProducesResponseType<ProblemDetails>(409)]
-    [ProducesResponseType<ProblemDetails>(503)]
+    [ProducesResponseType<ProblemDetails>(400, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(404, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(409, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(500, "application/problem+json")]
+    [ProducesResponseType<ProblemDetails>(503, "application/problem+json")]
     public async Task<ActionResult<WithdrawalResponse>> Withdraw(Guid walletId,
-        [FromBody] WithdrawalRequest request,
+        [FromBody, Required] WithdrawalRequest request,
         [FromHeader(Name = "Idempotency-Key"), Required] string idempotencyKey,
         CancellationToken cancellationToken)
     {

@@ -89,20 +89,6 @@ Errors use `application/problem+json` with `status`, `title`, `code`, and `trace
 | 503 | `database_unavailable` | Transient database connection failure or timeout |
 | 500 | `internal_error` | Unexpected server failure; internal details are logged, not returned |
 
-## Technical choices and trade-offs
-
-- **ASP.NET Core controllers:** standard binding, validation, Problem Details and Swagger integration. The controller handles HTTP, `WithdrawalService` handles the transaction, and `WalletDbContext` defines storage constraints. No generic repository or mediator framework is needed for two operations.
-- **PostgreSQL and EF Core:** explicit migrations, relational constraints, and real transactional locking. The service acquires `SELECT ... FOR UPDATE` on the wallet before checking the key and balance. Requests for a wallet serialize; requests for different wallets can proceed independently. A database check constraint additionally prevents a negative stored balance. An unprotected read-then-write would allow overspending, and an in-memory lock would not protect separate processes.
-- **Transactional outbox:** debit, receipt, and event commit together. Publishing directly inside the HTTP request was rejected: the database and broker cannot be committed atomically, and broker outages would either lose events or unnecessarily block withdrawals.
-- **RabbitMQ:** durable direct exchange `wallet.events`, durable queue `wallet.withdrawals`, routing key `wallet.withdrawal.succeeded.v1`, persistent messages, mandatory routing, and publisher confirms. The worker records publication only after confirmation. Returned/unroutable messages are failures, even if the exchange accepted the publish.
-- **One worker and bounded batches:** each cycle reads up to 20 due events, with a ten-second publication timeout per event. Failures retry after 2, 4, 8, 16, 32, then 60 seconds, capped at 60. The worker polls every second and retries indefinitely. Errors and attempts are persisted; a database outage is retried on subsequent cycles. One broker connection per event simplifies recovery at this low volume at the cost of throughput.
-- **At-least-once events:** a crash or database failure after broker confirmation can cause the same event to be published again. Its event ID remains unchanged. A future consumer must deduplicate by event ID; there is no exactly-once delivery claim. Ordering is not guaranteed because delayed events can be overtaken.
-- **Swagger client:** meets the demonstration need without a separate UI build or state management. Users explicitly supply and retain idempotency keys.
-
-See [architecture and sequence diagrams](docs/architecture.md).
-
-The local PostgreSQL connection disables GSS encryption negotiation because the demo uses password authentication and has no Kerberos setup. This avoids an unnecessary native Kerberos library dependency in the runtime container.
-
 ## Tests
 
 With the SDK and Docker running:
@@ -123,7 +109,7 @@ The test runner mounts the local Docker socket so Testcontainers can create disp
 
 Tests cover positive seeding and restart persistence, exact-balance withdrawals, invalid input, missing wallets, insufficient funds, concurrent overspending attempts, sequential/concurrent idempotency, database constraints and outages, transactional rollback on failed event insertion, broker outage/recovery, event schema and persistence properties, unroutable messages, duplicate publication after a confirmation-save failure, retry delays, and Swagger's documented contract. They use actual database transactions and broker publishes, not EF's in-memory provider.
 
-Local verification completed with **35 passing tests** through both the host SDK and the containerised Release test runner. The solution built without warnings or errors, and EF reported no pending model changes. A Playwright browser check exercised Swagger's balance, withdrawal, validation, conflict, and lost-response retry flows. Two successful demonstration withdrawals produced two published outbox records and two queued messages. GitHub Actions is configured; no remote CI result is claimed here.
+Initial verification completed with **35 passing tests** through both the host SDK and the containerised Release test runner. The subsequent skill-driven review added two tests, and the updated host Release suite passed **37 tests**, with zero failures or skips. The solution built without warnings or errors, and EF reported no pending model changes. A Playwright browser check exercised Swagger's balance, withdrawal, validation, conflict, and lost-response retry flows. Two successful demonstration withdrawals produced two published outbox records and two queued messages. GitHub Actions is configured; no remote CI result is claimed here.
 
 To maintain the schema, run `dotnet tool restore`, then `dotnet ef migrations add <Name> --project src/Wallet.Api --output-dir Data/Migrations` after changing the EF model; commit the generated migration and snapshot.
 
@@ -138,3 +124,36 @@ To maintain the schema, run `dotnet tool restore`, then `dotnet ef migrations ad
 docker compose exec postgres psql -U wallet -d wallet -c 'SELECT "Id", "AttemptCount", "PublishedAtUtc", "NextAttemptAtUtc", "LastError" FROM "OutboxMessages";'
 docker compose logs api
 ```
+
+## AI-assisted development
+
+1. **Bootstrap the project and database connection.** Codex scaffolded the ASP.NET Core solution, configured EF Core/Npgsql, and connected the API to PostgreSQL. It also checked the local tooling and installed the .NET 10 SDK needed to build and test the solution.
+
+2. **Define the schema and persistence rules.** AI-assisted design covered wallets, withdrawal receipts, and outbox messages. This included representing money in integer cents, preventing negative balances with a database constraint, and enforcing unique idempotency keys per wallet. The resulting model and migration are in `src/Wallet.Api/Data`.
+
+3. **Review withdrawal logic and suggest changes for concurrent requests.** Codex helped review how simultaneous withdrawals could read the same available balance and allow overspending. It suggested locking the wallet row before checking the balance and idempotency key, with the debit, receipt, and pending event saved in one transaction. Concurrent-request tests against PostgreSQL verified that competing withdrawals cannot overspend and duplicate requests do not debit the wallet twice.
+
+4. **Build out Docker Compose.** Codex created the API Dockerfile and Compose services for PostgreSQL and RabbitMQ, including persistent volumes, local connection settings, and database readiness checks. It also added a separate containerised test runner so the suite can run without a host .NET SDK.
+
+5. **Set up and run automated tests on my machine.** Codex configured xUnit and Testcontainers, generated unit and integration tests, and ran them locally and through Docker. It resolved a Docker Desktop socket-mount issue and adjusted restart tests for changing container ports. Both runs finished with 35 passing tests; most of the suite exercises real database and broker behaviour.
+
+6. **Explore event-delivery failure scenarios.** AI-assisted reasoning informed the transactional outbox, mandatory RabbitMQ routing, publisher confirms, and retry backoff. Fault-injection tests deliberately rejected an outbox insert to check rollback, then rejected a publication-state update to demonstrate why an already-published event can be delivered again. These cases are covered in `WalletTests` and `EventTests`.
+
+7. **Use test feedback to refine the implementation.** Compilation and runtime checks exposed issues that were corrected during development. Examples include ASP.NET Core validation attributes on a positional record, which led to a request class with property validation, and timestamp precision, which was aligned with PostgreSQL so original and replayed receipts match.
+
+
+### Custom skills used for a subsequent review
+
+| Skill package | How it was used |
+|---|---|
+| [`dotnet-test-verification`](.agents/skills/dotnet-test-verification/SKILL.md) | Checked the pinned SDK and Docker, restored locked dependencies, and ran the Release suite through its executable helper. Its coverage guidance also informed the test review. |
+| [`transactional-outbox-review`](.agents/skills/transactional-outbox-review/SKILL.md) | Guided an independent review of wallet locking, idempotency, transaction boundaries, broker confirmation, duplicate delivery, and publisher ownership. |
+| [`docker-local-validation`](.agents/skills/docker-local-validation/SKILL.md) | Validated both Compose configurations and inspected running service health, logs, non-root API execution, volume configuration, and read-only API connectivity. The review did not reset the demonstration data. |
+
+To repeat the skill's automated test workflow from the repository root:
+
+```sh
+.agents/skills/dotnet-test-verification/scripts/verify.sh "$PWD"
+```
+
+`DOTNET_BIN` can select a particular SDK executable. On this machine, the run also used `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`. Results are written to the ignored `artifacts/skill-review/test-results` directory.

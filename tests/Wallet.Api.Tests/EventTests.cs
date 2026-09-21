@@ -10,6 +10,34 @@ namespace Wallet.Api.Tests;
 public sealed class EventTests(Infrastructure infrastructure)
 {
     [Fact]
+    public async Task Hosted_worker_publishes_without_manual_dispatch_or_schedule_changes()
+    {
+        await infrastructure.PurgeQueueAsync();
+        await using var app = await infrastructure.CreateAppAsync(enableOutbox: true);
+        using var client = app.CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await WalletTests.WithdrawAsync(client, 2500)).StatusCode);
+
+        var published = false;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (!published)
+        {
+            await app.WithDbAsync(async db => published = await db.OutboxMessages
+                .AnyAsync(x => x.PublishedAtUtc != null, deadline.Token));
+            if (!published) await Task.Delay(100, deadline.Token);
+        }
+        await using var connection = await infrastructure.ConnectRabbitAsync();
+        await using var channel = await connection.CreateChannelAsync();
+        var delivery = await channel.BasicGetAsync(RabbitMqPublisher.Queue, autoAck: true);
+        Assert.NotNull(delivery);
+        await app.WithDbAsync(async db =>
+        {
+            var message = await db.OutboxMessages.SingleAsync();
+            Assert.Equal(message.Id.ToString(), delivery.BasicProperties.MessageId);
+            Assert.Equal(97500, (await db.Wallets.SingleAsync()).BalanceMinor);
+        });
+    }
+
+    [Fact]
     public async Task Confirmed_event_has_expected_schema_routing_and_persistence()
     {
         await infrastructure.PurgeQueueAsync();

@@ -27,7 +27,7 @@ public sealed class Infrastructure : IAsyncLifetime
         await Postgres.DisposeAsync();
     }
 
-    public async Task<TestApp> CreateAppAsync()
+    public async Task<TestApp> CreateAppAsync(bool enableOutbox = false)
     {
         var name = "test_" + Guid.NewGuid().ToString("N");
         await using var connection = new NpgsqlConnection(Postgres.GetConnectionString());
@@ -35,7 +35,7 @@ public sealed class Infrastructure : IAsyncLifetime
         await using var command = new NpgsqlCommand($"CREATE DATABASE {name}", connection);
         await command.ExecuteNonQueryAsync();
         var builder = new NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Database = name };
-        return new TestApp(builder.ConnectionString, Rabbit.GetConnectionString());
+        return new TestApp(builder.ConnectionString, Rabbit.GetConnectionString(), enableOutbox);
     }
 
     public async Task<IConnection> ConnectRabbitAsync() =>
@@ -50,7 +50,7 @@ public sealed class Infrastructure : IAsyncLifetime
     }
 }
 
-public sealed class TestApp(string connectionString, string rabbitConnectionString) : WebApplicationFactory<Program>
+public sealed class TestApp(string connectionString, string rabbitConnectionString, bool enableOutbox = false) : WebApplicationFactory<Program>
 {
     public string ConnectionString { get; } = connectionString;
 
@@ -58,7 +58,7 @@ public sealed class TestApp(string connectionString, string rabbitConnectionStri
     {
         builder.UseSetting("ConnectionStrings:Wallet", ConnectionString);
         builder.UseSetting("RabbitMq:ConnectionString", rabbitConnectionString);
-        builder.UseSetting("Outbox:Enabled", "false");
+        builder.UseSetting("Outbox:Enabled", enableOutbox.ToString());
         builder.UseSetting("Logging:LogLevel:Default", "Critical");
     }
 
